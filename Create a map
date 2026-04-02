@@ -1,0 +1,282 @@
+"""
+PART 1 - COMPLETE MAP FUNCTION (Fixed)
+Creates an interactive map with all station pinpoints
+"""
+
+import pandas as pd
+import folium
+from folium.plugins import MarkerCluster
+import webbrowser
+import os
+
+def create_station_map(station_csv_path, output_html='water_quality_map.html'):
+    """
+    Creates an interactive map with pinpoints for all water quality monitoring stations.
+    
+    Parameters:
+    - station_csv_path: Path to the station.csv file
+    - output_html: Name of the output HTML file (default: 'water_quality_map.html')
+    
+    Returns:
+    - folium Map object
+    """
+    
+    # ============================================
+    # STEP 1: Load and clean the station data
+    # ============================================
+    print("Loading station data...")
+    df = pd.read_csv(station_csv_path)
+    
+    print(f"Total rows in file: {len(df)}")
+    
+    # Remove duplicate stations (keep first occurrence of each unique station ID)
+    df_unique = df.drop_duplicates(subset=['MonitoringLocationIdentifier'])
+    
+    # Remove stations with missing coordinates
+    df_clean = df_unique.dropna(subset=['LatitudeMeasure', 'LongitudeMeasure'])
+    
+    print(f"Unique stations with coordinates: {len(df_clean)}")
+    
+    # ============================================
+    # STEP 2: Calculate map center
+    # ============================================
+    center_lat = df_clean['LatitudeMeasure'].mean()
+    center_lon = df_clean['LongitudeMeasure'].mean()
+    
+    print(f"Map center: ({center_lat:.4f}, {center_lon:.4f})")
+    
+    # ============================================
+    # STEP 3: Create the base map
+    # ============================================
+    # Create map centered on Kentucky
+    m = folium.Map(
+        location=[center_lat, center_lon],
+        zoom_start=8,
+        control_scale=True
+    )
+    
+    # Add different map styles (with proper attribution)
+    folium.TileLayer('OpenStreetMap', name='Street Map').add_to(m)
+    folium.TileLayer('CartoDB positron', name='Light Map').add_to(m)
+    folium.TileLayer('CartoDB dark_matter', name='Dark Map').add_to(m)
+    
+    # Add Stamen Terrain with proper attribution
+    folium.TileLayer(
+        tiles='Stamen Terrain',
+        name='Terrain',
+        attr='Map tiles by Stamen Design, under CC BY 3.0. Data by OpenStreetMap, under ODbL.'
+    ).add_to(m)
+    
+    # ============================================
+    # STEP 4: Define colors for different station types
+    # ============================================
+    type_colors = {
+        'Stream': 'blue',
+        'River/Stream': 'green',
+        'Spring': 'orange',
+        'Lake/Reservoir': 'purple',
+        'Well': 'red',
+        'Unknown': 'gray'
+    }
+    
+    # ============================================
+    # STEP 5: Add markers for each station
+    # ============================================
+    # Create a marker cluster for better organization
+    marker_cluster = MarkerCluster().add_to(m)
+    
+    stations_added = 0
+    
+    for idx, row in df_clean.iterrows():
+        # Determine marker color
+        station_type = row.get('MonitoringLocationTypeName', 'Unknown')
+        if pd.isna(station_type):
+            station_type = 'Unknown'
+        color = type_colors.get(station_type, 'gray')
+        
+        # Get organization name (handle potential missing column)
+        org_name = row.get('OrganizationFormalName', row.get('OrganizationIdentifier', 'Unknown'))
+        if pd.isna(org_name):
+            org_name = 'Unknown'
+        
+        # Get station name
+        station_name = row.get('MonitoringLocationName', row['MonitoringLocationIdentifier'])
+        if pd.isna(station_name):
+            station_name = row['MonitoringLocationIdentifier']
+        
+        # Create popup content with HTML formatting
+        popup_html = f"""
+        <div style="font-family: Arial, sans-serif; font-size: 13px; min-width: 220px;">
+            <h4 style="margin: 0 0 5px 0; color: #2c3e50;">{station_name}</h4>
+            <hr style="margin: 5px 0;">
+            <b>Station ID:</b> {row['MonitoringLocationIdentifier']}<br>
+            <b>Type:</b> {station_type}<br>
+            <b>Organization:</b> {org_name}<br>
+            <hr style="margin: 5px 0;">
+            <b>Coordinates:</b><br>
+            &nbsp;&nbsp;Latitude: {row['LatitudeMeasure']:.6f}<br>
+            &nbsp;&nbsp;Longitude: {row['LongitudeMeasure']:.6f}
+        </div>
+        """
+        
+        # Create the marker
+        folium.Marker(
+            location=[row['LatitudeMeasure'], row['LongitudeMeasure']],
+            popup=folium.Popup(popup_html, max_width=300),
+            tooltip=f"{station_name} ({station_type})",
+            icon=folium.Icon(color=color, icon='tint', prefix='fa')
+        ).add_to(marker_cluster)
+        
+        stations_added += 1
+    
+    print(f"Added {stations_added} markers to the map")
+    
+    # ============================================
+    # STEP 6: Add layer control
+    # ============================================
+    folium.LayerControl().add_to(m)
+    
+    # Add fullscreen button
+    try:
+        from folium.plugins import Fullscreen
+        Fullscreen().add_to(m)
+    except:
+        print("Fullscreen plugin not available, continuing...")
+    
+    # ============================================
+    # STEP 7: Save the map
+    # ============================================
+    m.save(output_html)
+    print(f"\nMap saved as: {output_html}")
+    print(f"File location: {os.path.abspath(output_html)}")
+    
+    return m
+
+
+# ============================================
+# SIMPLER VERSION (Most Compatible)
+# ============================================
+
+def create_simple_map(station_csv_path, output_html='simple_water_map.html'):
+    """
+    Creates a simpler map without advanced tile layers.
+    This version is more compatible and less likely to have attribution errors.
+    """
+    print("\n" + "="*50)
+    print("Creating Simple Map...")
+    print("="*50)
+    
+    # Load and clean data
+    df = pd.read_csv(station_csv_path)
+    df_unique = df.drop_duplicates(subset=['MonitoringLocationIdentifier'])
+    df_clean = df_unique.dropna(subset=['LatitudeMeasure', 'LongitudeMeasure'])
+    
+    center_lat = df_clean['LatitudeMeasure'].mean()
+    center_lon = df_clean['LongitudeMeasure'].mean()
+    
+    # Create map with basic OpenStreetMap
+    m = folium.Map(
+        location=[center_lat, center_lon], 
+        zoom_start=8,
+        control_scale=True
+    )
+    
+    # Add markers
+    for idx, row in df_clean.iterrows():
+        station_name = row.get('MonitoringLocationName', row['MonitoringLocationIdentifier'])
+        if pd.isna(station_name):
+            station_name = row['MonitoringLocationIdentifier']
+        
+        org_name = row.get('OrganizationFormalName', row.get('OrganizationIdentifier', 'Unknown'))
+        if pd.isna(org_name):
+            org_name = 'Unknown'
+        
+        station_type = row.get('MonitoringLocationTypeName', 'Unknown')
+        if pd.isna(station_type):
+            station_type = 'Unknown'
+        
+        popup_text = f"""
+        <b>{station_name}</b><br>
+        ID: {row['MonitoringLocationIdentifier']}<br>
+        Type: {station_type}<br>
+        Org: {org_name}
+        """
+        
+        folium.Marker(
+            location=[row['LatitudeMeasure'], row['LongitudeMeasure']],
+            popup=popup_text,
+            tooltip=station_name,
+            icon=folium.Icon(color='red', icon='info-sign')
+        ).add_to(m)
+    
+    m.save(output_html)
+    print(f"Simple map saved as: {output_html}")
+    return m
+
+
+# ============================================
+# DISPLAY MAP IN JUPYTER/NOTEBOOK (if using Colab)
+# ============================================
+
+def display_map_in_notebook(map_object):
+    """
+    Display a folium map directly in Jupyter Notebook/Google Colab.
+    """
+    from IPython.display import display, HTML
+    map_html = map_object._repr_html_()
+    display(HTML(map_html))
+
+
+# ============================================
+# MAIN EXECUTION
+# ============================================
+
+if __name__ == "__main__":
+    # Path to your station.csv file
+    STATION_FILE = 'station.csv'
+    
+    print("="*60)
+    print("PART 1 - Water Quality Station Map")
+    print("="*60)
+    
+    # OPTION 1: Create the full-featured map
+    try:
+        my_map = create_station_map(STATION_FILE, 'water_quality_map.html')
+        print("\nFull-featured map created successfully!")
+    except Exception as e:
+        print(f"\nError creating full-featured map: {e}")
+        print("Falling back to simple map...")
+        my_map = create_simple_map(STATION_FILE, 'water_quality_map.html')
+    
+    # Try to open the map in web browser
+    try:
+        webbrowser.open('water_quality_map.html')
+        print("\nOpening map in web browser...")
+    except:
+        print("\nMap saved. Open 'water_quality_map.html' in your browser.")
+    
+    # If running in Jupyter/Colab, display the map inline
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            print("\nDisplaying map in notebook...")
+            display_map_in_notebook(my_map)
+    except:
+        pass
+    
+    print("\n" + "="*60)
+    print("MAP CREATED SUCCESSFULLY!")
+    print("="*60)
+    
+    # Print summary
+    print("\n" + "-"*40)
+    print("STATION SUMMARY:")
+    print("-"*40)
+    df = pd.read_csv(STATION_FILE)
+    df_unique = df.drop_duplicates(subset=['MonitoringLocationIdentifier'])
+    df_clean = df_unique.dropna(subset=['LatitudeMeasure', 'LongitudeMeasure'])
+    
+    for idx, row in df_clean.iterrows():
+        station_type = row.get('MonitoringLocationTypeName', 'Unknown')
+        org = row.get('OrganizationFormalName', row.get('OrganizationIdentifier', 'Unknown'))
+        print(f"• {row['MonitoringLocationName']} - {station_type} ({org})")
