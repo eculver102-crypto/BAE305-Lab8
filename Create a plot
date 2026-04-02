@@ -1,0 +1,301 @@
+"""
+PART 2 - What's Trending
+Plot water quality characteristics - NO ZEROS, only real numbers
+"""
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+import warnings
+from ipywidgets import interact, widgets, Dropdown, interactive_output
+from IPython.display import display, clear_output
+warnings.filterwarnings('ignore')
+
+%matplotlib inline
+
+
+def load_station_data(station_file_path):
+    """Load station database with organization names"""
+    print(f"Loading station data...")
+    stations_df = pd.read_csv(station_file_path)
+    stations_df = stations_df.drop_duplicates(subset=['MonitoringLocationIdentifier'])
+    
+    station_to_org = {}
+    station_to_name = {}
+    
+    for idx, row in stations_df.iterrows():
+        station_id = row['MonitoringLocationIdentifier']
+        org_name = row.get('OrganizationFormalName', None)
+        if pd.isna(org_name):
+            org_name = row.get('OrganizationIdentifier', 'Unknown')
+        station_name = row.get('MonitoringLocationName', station_id)
+        if pd.isna(station_name):
+            station_name = station_id
+        
+        station_to_org[station_id] = org_name
+        station_to_name[station_id] = station_name
+    
+    print(f"Loaded {len(station_to_org)} stations")
+    return station_to_org, station_to_name
+
+
+def load_and_clean_data(file_path):
+    """
+    Load data and remove ONLY zeros and empty cells
+    Keep all other real numbers (including values under 1)
+    """
+    print(f"\n{'='*60}")
+    print("LOADING AND CLEANING DATA")
+    print(f"{'='*60}")
+    
+    # Load raw data
+    df = pd.read_csv(file_path)
+    original_count = len(df)
+    print(f"Original rows: {original_count:,}")
+    
+    # Track removals
+    zero_removed = 0
+    na_removed = 0
+    blank_removed = 0
+    
+    # Clean the data
+    # Remove rows with empty/NA characteristic names
+    before = len(df)
+    df = df.dropna(subset=['CharacteristicName'])
+    df = df[df['CharacteristicName'].astype(str).str.strip() != '']
+    na_removed += before - len(df)
+    
+    # Remove rows with empty/NA result values
+    before = len(df)
+    df = df.dropna(subset=['ResultMeasureValue'])
+    df = df[df['ResultMeasureValue'].astype(str).str.strip() != '']
+    na_removed += before - len(df)
+    
+    # Convert result values to numeric
+    df['ResultMeasureValue'] = pd.to_numeric(df['ResultMeasureValue'], errors='coerce')
+    
+    # REMOVE ZEROS (but keep other numbers)
+    before = len(df)
+    df = df[df['ResultMeasureValue'] != 0]
+    zero_removed = before - len(df)
+    
+    # Remove any remaining NAs from conversion
+    before = len(df)
+    df = df.dropna(subset=['ResultMeasureValue'])
+    na_removed += before - len(df)
+    
+    # Remove rows with empty/NA dates
+    before = len(df)
+    df = df.dropna(subset=['ActivityStartDate'])
+    df = df[df['ActivityStartDate'].astype(str).str.strip() != '']
+    df['ActivityStartDate'] = pd.to_datetime(df['ActivityStartDate'], errors='coerce')
+    df = df.dropna(subset=['ActivityStartDate'])
+    na_removed += before - len(df)
+    
+    # Remove rows with empty/NA station IDs
+    before = len(df)
+    df = df.dropna(subset=['MonitoringLocationIdentifier'])
+    df = df[df['MonitoringLocationIdentifier'].astype(str).str.strip() != '']
+    na_removed += before - len(df)
+    
+    print(f"\n--- REMOVED ---")
+    print(f"  Zero values removed: {zero_removed:,}")
+    print(f"  Empty/NA values removed: {na_removed:,}")
+    print(f"\n✅ CLEAN DATA: {len(df):,} rows ({len(df)/original_count*100:.1f}% of original)")
+    
+    # Verify no zeros remain
+    zeros_left = (df['ResultMeasureValue'] == 0).sum()
+    if zeros_left > 0:
+        print(f"⚠️ Warning: {zeros_left} zeros still found! Removing them...")
+        df = df[df['ResultMeasureValue'] != 0]
+        print(f"  Final count: {len(df):,}")
+    else:
+        print(f"✅ Verified: No zeros remain in dataset")
+    
+    return df
+
+
+def plot_characteristic(clean_df, station_to_org, station_to_name, 
+                        characteristic_name, fraction_filter=None):
+    """
+    Plot water quality characteristic - NO ZEROS
+    """
+    clear_output(wait=True)
+    
+    print(f"\n{'='*60}")
+    print(f"PLOTTING: {characteristic_name}")
+    print(f"{'='*60}")
+    
+    # Filter for characteristic
+    plot_df = clean_df[clean_df['CharacteristicName'] == characteristic_name].copy()
+    
+    if len(plot_df) == 0:
+        print(f"❌ No data found for '{characteristic_name}'")
+        return
+    
+    print(f"Records found: {len(plot_df)}")
+    
+    # Apply fraction filter if needed
+    if fraction_filter and fraction_filter != 'None':
+        plot_df = plot_df[plot_df['ResultSampleFractionText'] == fraction_filter]
+        print(f"After fraction filter: {len(plot_df)} records")
+    
+    # Final safety check - remove any zeros that slipped through
+    before = len(plot_df)
+    plot_df = plot_df[plot_df['ResultMeasureValue'] != 0]
+    if before - len(plot_df) > 0:
+        print(f"Removed {before - len(plot_df)} additional zero values")
+    
+    plot_df = plot_df.sort_values('ActivityStartDate')
+    
+    if len(plot_df) == 0:
+        print(f"❌ No non-zero data found for '{characteristic_name}'")
+        return
+    
+    # Get units
+    units = plot_df['ResultMeasure/MeasureUnitCode'].iloc[0]
+    if pd.isna(units):
+        units = ''
+    
+    # Get stations
+    stations = plot_df['MonitoringLocationIdentifier'].unique()
+    print(f"\nStations with non-zero data: {len(stations)}")
+    
+    # Create plot
+    fig, ax = plt.subplots(figsize=(14, 8))
+    colors = plt.cm.tab20(np.linspace(0, 1, len(stations)))
+    
+    for i, station in enumerate(stations):
+        station_data = plot_df[plot_df['MonitoringLocationIdentifier'] == station]
+        
+        if len(station_data) == 0:
+            continue
+        
+        org_name = station_to_org.get(station, 'Unknown')
+        station_name = station_to_name.get(station, station)
+        label = f"{org_name} - {station_name[:35]}"
+        
+        ax.plot(station_data['ActivityStartDate'], 
+                station_data['ResultMeasureValue'],
+                marker='o', linestyle='-', linewidth=2, markersize=5,
+                color=colors[i], label=label, alpha=0.8)
+    
+    # Format plot
+    fraction_text = f" ({fraction_filter})" if fraction_filter and fraction_filter != 'None' else ""
+    ax.set_title(f'{characteristic_name}{fraction_text} - Time Series\n(✅ Zero values removed)', 
+                 fontsize=14, fontweight='bold')
+    ax.set_xlabel('Date', fontsize=12)
+    ax.set_ylabel(f'Value ({units})', fontsize=12)
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=9)
+    ax.grid(True, alpha=0.3)
+    ax.tick_params(axis='x', rotation=45)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Print statistics
+    print(f"\n{'='*50}")
+    print("STATISTICS (Non-zero values only)")
+    print(f"{'='*50}")
+    for station in stations:
+        station_data = plot_df[plot_df['MonitoringLocationIdentifier'] == station]
+        if len(station_data) == 0:
+            continue
+        org_name = station_to_org.get(station, 'Unknown')
+        print(f"\n{org_name}:")
+        print(f"  Samples: {len(station_data)}")
+        print(f"  Date range: {station_data['ActivityStartDate'].min().date()} to {station_data['ActivityStartDate'].max().date()}")
+        print(f"  Mean: {station_data['ResultMeasureValue'].mean():.3f} {units}")
+        print(f"  Min: {station_data['ResultMeasureValue'].min():.3f} {units}")
+        print(f"  Max: {station_data['ResultMeasureValue'].max():.3f} {units}")
+
+
+def create_interactive_plotter(clean_df, station_to_org, station_to_name):
+    """Create interactive dropdown plotter"""
+    
+    print("\n" + "="*70)
+    print("🌊 INTERACTIVE WATER QUALITY PLOTTER")
+    print("="*70)
+    print("✅ Zero values have been removed")
+    print("✅ All other real numbers are kept (including values under 1)")
+    print("="*70)
+    
+    if len(clean_df) == 0:
+        print("❌ No clean data available!")
+        return
+    
+    # Get characteristics
+    char_counts = clean_df['CharacteristicName'].value_counts()
+    char_names = sorted(char_counts.index.tolist())
+    
+    print(f"\n📊 Available characteristics: {len(char_names)}")
+    print(f"📈 Total clean records: {len(clean_df):,}")
+    print(f"📍 Total stations: {clean_df['MonitoringLocationIdentifier'].nunique()}")
+    
+    # Create dropdowns
+    char_dropdown = Dropdown(
+        options=char_names,
+        description='Characteristic:',
+        layout={'width': '550px'},
+        style={'description_width': 'initial'}
+    )
+    
+    fraction_options = ['None'] + sorted(clean_df['ResultSampleFractionText'].dropna().unique().tolist())
+    fraction_dropdown = Dropdown(
+        options=fraction_options,
+        description='Fraction Filter:',
+        layout={'width': '350px'},
+        style={'description_width': 'initial'}
+    )
+    
+    def update_plot(characteristic, fraction):
+        plot_characteristic(clean_df, station_to_org, station_to_name, characteristic, fraction)
+    
+    interactive_plot = interactive_output(update_plot, {
+        'characteristic': char_dropdown,
+        'fraction': fraction_dropdown
+    })
+    
+    display(char_dropdown, fraction_dropdown)
+    print("\n" + "-"*50)
+    display(interactive_plot)
+    
+    # Show top characteristics
+    print("\n📊 TOP CHARACTERISTICS:")
+    print("-" * 60)
+    for i, (char, count) in enumerate(char_counts.head(15).items(), 1):
+        stations = clean_df[clean_df['CharacteristicName'] == char]['MonitoringLocationIdentifier'].nunique()
+        print(f"{i:2}. {char[:50]:<50} ({count} records, {stations} stations)")
+
+
+# ============================================
+# MAIN EXECUTION
+# ============================================
+
+def main():
+    STATION_FILE = 'station.csv'
+    WATER_FILE = 'narrowresult.csv'
+    
+    try:
+        # Load station data
+        station_to_org, station_to_name = load_station_data(STATION_FILE)
+        
+        # Load and clean data (removes ONLY zeros and empty cells)
+        clean_df = load_and_clean_data(WATER_FILE)
+        
+        if len(clean_df) == 0:
+            print("\n❌ No clean data available!")
+            return
+        
+        # Create interactive plotter
+        create_interactive_plotter(clean_df, station_to_org, station_to_name)
+        
+    except FileNotFoundError as e:
+        print(f"\n❌ ERROR: Could not find file: {e}")
+    except Exception as e:
+        print(f"\n❌ An error occurred: {e}")
+
+
+# Run it
+if __name__ == "__main__":
+    main()
